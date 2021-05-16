@@ -24,10 +24,10 @@
 //            rad: the width of the blur
 //            bpp: The bits per pixel in the src image
 //Returns: None
-__global__ void computeRow(float* src,float* dest,int pWidth,int radius,int bpp){
-  int row = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void computeRow(float* src,float* dest,int pWidth,int radius,int bpp, int height){
+  int row = (blockIdx.x * blockDim.x) + threadIdx.x;
 
-  if (row > pWidth) {
+  if (row >= height) {
 //    printf("unused thread in comptuerRow\n");
     return;
   }
@@ -63,11 +63,9 @@ __global__ void computeRow(float* src,float* dest,int pWidth,int radius,int bpp)
 //            bpp: The bits per pixel in the src image
 //Returns: None
 __global__ void computeColumn(uint8_t* src,float* dest,int pWidth,int height,int radius,int bpp){
-  int blockx = blockIdx.x;
-  int x = threadIdx.x;
-  int col = blockx* blockDim.x + x; //gives number of column
+  int col = (blockIdx.x * blockDim.x) + threadIdx.x; //gives number of column
 
-  if (col > pWidth) {
+  if (col >= pWidth) {
   //  printf("unused thread\n");
     return;
   }
@@ -101,61 +99,61 @@ int Usage(char* name){
 }
 
 int main(int argc,char** argv){
-    printf("made it to main function at least\n");
-long t1,t2;
-    int radius=0;
-    int i;
-    int width,height,bpp,pWidth;
-    char* filename;
-    uint8_t *img, *cudaImg;
-    float* dest,*mid;
-
-    if (argc!=3)
-        return Usage(argv[0]);
-    filename=argv[1];
-    sscanf(argv[2],"%d",&radius);
-   
-    img=stbi_load(filename,&width,&height,&bpp,0);
-
-    printf("read image in\n");
-    cudaMallocManaged(&cudaImg, sizeof(*img));
-    memcpy(cudaImg, img, sizeof(*img));
-    printf("cuda copied image\n");
-    pWidth=width*bpp;  //actual width in bytes of an image row
-
-    //mid=malloc(sizeof(float)*pWidth*height);   
-    cudaMallocManaged(&mid, sizeof(float)*pWidth*height); 
-    //dest=malloc(sizeof(float)*pWidth*height);   
-    cudaMallocManaged(&dest, sizeof(float)*pWidth*height);
+  long t1,t2;
+  int radius=0;
+  int i;
+  int width,height,bpp,pWidth;
+  char* filename;
+  uint8_t *img;
+  float* dest,*mid;
+  
+  if (argc!=3)
+    return Usage(argv[0]);
+  filename=argv[1];
+  sscanf(argv[2],"%d",&radius);
+  
+  img=stbi_load(filename,&width,&height,&bpp,0);
+  
+  pWidth=width*bpp;  //actual width in bytes of an image row
+  
+  //mid=malloc(sizeof(float)*pWidth*height);   
+  cudaMallocManaged(&mid, sizeof(float)*pWidth*height); 
+  //dest=malloc(sizeof(float)*pWidth*height);   
+  cudaMallocManaged(&dest, sizeof(float)*pWidth*height);
     
-    t1=time(NULL);
-    //for (i=0;i<pWidth;i++){
-    //   computeColumn(img,mid,i,pWidth,height,radius,bpp);
-    // }
-    int num_blocks_cols = (pWidth + 255)/256;
+  t1=time(NULL);
+  //for (i=0;i<pWidth;i++){
+  //   computeColumn(img,mid,i,pWidth,height,radius,bpp);
+  // }
+  int num_blocks_cols = (pWidth + 255)/256;
+  computeColumn<<<num_blocks_cols,256>>>(img, mid, pWidth, height, radius, bpp);
+  cudaDeviceSynchronize();
     
-    computeColumn<<<num_blocks_cols,256>>>(cudaImg,mid,pWidth, height, radius, bpp);
-    cudaDeviceSynchronize();
-    
-    stbi_image_free(img); //done with image
-    int num_blocks_rows = (height+255)/256;
-    computeRow<<<num_blocks_rows,256>>>(mid,dest,pWidth,radius,bpp);
-    cudaDeviceSynchronize();
-    //for (i=0;i<height;i++){
-    //  computeRow(mid,dest,i,pWidth,radius,bpp);
-    //}
-    t2=time(NULL);
-    //free(mid); //done with mid
-    cudaFree(mid);
-    //now back to int8 so we can save it
-    img=(uint8_t *) malloc(sizeof(uint8_t)*pWidth*height);
-    for (i=0;i<pWidth*height;i++){
-        img[i]=(uint8_t)dest[i];
-    }
-    //free(dest);   
-    cudaFree(dest);
-    cudaFree(cudaImg);
-    stbi_write_png("output.png",width,height,bpp,img,bpp*width);
-    free(img);
-    printf("Blur with radius %d complete in %ld seconds\n",radius,t2-t1);
+  stbi_image_free(img); //done with image
+
+  int num_blocks_rows = (height+255)/256;
+  computeRow<<<num_blocks_rows,256>>>(mid,dest,pWidth,radius,bpp, height);
+   cudaDeviceSynchronize();
+
+   //for (i=0;i<height;i++){
+  //  computeRow(mid,dest,i,pWidth,radius,bpp);
+  //}
+  t2=time(NULL);
+  //free(mid); //done with mid
+  cudaFree(mid);
+
+  //now back to int8 so we can save it
+  img=(uint8_t *) malloc(sizeof(uint8_t)*pWidth*height);
+  for (i=0;i<pWidth*height;i++){
+    //    if(i%1000==0)
+      printf("i:%d - %f\n", i, dest[i]);
+    img[i]=(uint8_t)dest[i];
+  }
+  
+  //free(dest);   
+  cudaFree(dest);
+  
+  stbi_write_png("output.png",width,height,bpp,img,bpp*width);
+  free(img);
+  printf("Blur with radius %d complete in %ld seconds\n",radius,t2-t1);
 }
